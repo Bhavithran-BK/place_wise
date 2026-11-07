@@ -1,6 +1,6 @@
 # 🏆 PLACEWISE — Prize-Winning Hackathon Strategy & Implementation Plan
 
-> **"Apna room, apna voice, apna arrangement."**
+> **"Namma room, namma voice, namma arrangement."**
 > Upload a photo. Speak in Tanglish. Watch your space transform.
 
 ---

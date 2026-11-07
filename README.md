@@ -1,6 +1,6 @@
 # 🏆 PLACEWISE — Voice-Controlled Regional Space Rearrangement
 
-> **"Apna room, apna voice, apna arrangement."**
+> **"Namma room, namma voice, namma arrangement."**
 > Upload a photograph. Speak in Tanglish/Tamil/English. Watch your space visually rearrange.
 
 Built for the **Gnani AI Hackathon**.
