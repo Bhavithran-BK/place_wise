@@ -27,6 +27,7 @@ backend/storage/results/*
 !backend/storage/results/.gitkeep
 backend/storage/rooms/*
 !backend/storage/rooms/.gitkeep
+backend/storage/room_*.json
 
 # OS / Editor
 .DS_Store
@@ -34,3 +35,4 @@ Thumbs.db
 .vscode/
 .idea/
 *.log
+
