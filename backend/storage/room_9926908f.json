@@ -1,0 +1,90 @@
+{
+  "room_id": "9926908f",
+  "filename": "9926908f.jpg",
+  "image_path": "C:\\Users\\bhavi\\OneDrive\\Desktop\\hackathons\\Gnani AI\\backend\\storage\\uploads\\9926908f.jpg",
+  "image_url": "/storage/uploads/9926908f.jpg",
+  "width": 800,
+  "height": 600,
+  "created_at": "2026-11-07T10:43:29.995736",
+  "status": "completed",
+  "detected_objects": [
+    {
+      "object_id": "tv_01",
+      "class": "tv",
+      "confidence": 0.88,
+      "bbox": [
+        0,
+        79,
+        800,
+        536
+      ],
+      "mask_path": "mask_9926908f_tv_01.png",
+      "mask_url": "/storage/masks/mask_9926908f_tv_01.png",
+      "action": "KEEP",
+      "fixed": true
+    }
+  ],
+  "voice_transcript": "Indha rendu chairs vendaam. Sofa venum.",
+  "arrangement_plan": {
+    "room_dimensions": [
+      800,
+      600
+    ],
+    "objects": [
+      {
+        "id": "tv_01",
+        "class": "tv",
+        "action": "KEEP",
+        "from": [
+          0,
+          79,
+          800,
+          536
+        ],
+        "to": [
+          0,
+          79,
+          800,
+          536
+        ],
+        "fixed": true,
+        "movement_vector": [
+          0,
+          0
+        ]
+      }
+    ],
+    "constraints": {
+      "no_object_overlap": true,
+      "stay_inside_room": true,
+      "preserve_fixed_objects": true
+    },
+    "summary": {
+      "total_objects": 1,
+      "kept_count": 1,
+      "removed_count": 0,
+      "moved_count": 0
+    }
+  },
+  "instruction_plan": {
+    "mode": "KEEP_AND_REMOVE",
+    "actions": [
+      {
+        "object_id": "tv_01",
+        "action": "KEEP"
+      }
+    ],
+    "rearrange_remaining": false,
+    "clarification_required": false,
+    "clarification_message": null,
+    "parsed_keep": [
+      "sofa"
+    ],
+    "parsed_remove": [
+      "chair"
+    ],
+    "raw_transcript": "Indha rendu chairs vendaam. Sofa venum."
+  },
+  "plan_image_url": "/storage/results/plan_9926908f.jpg",
+  "rearranged_image_url": "/storage/results/rearranged_9926908f.jpg"
+}

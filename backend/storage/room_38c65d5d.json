@@ -1,0 +1,29 @@
+{
+  "room_id": "38c65d5d",
+  "filename": "38c65d5d.jpg",
+  "image_path": "C:\\Users\\bhavi\\OneDrive\\Desktop\\hackathons\\Gnani AI\\backend\\storage\\uploads\\38c65d5d.jpg",
+  "image_url": "/storage/uploads/38c65d5d.jpg",
+  "width": 800,
+  "height": 600,
+  "created_at": "2026-11-07T00:28:30.997968",
+  "status": "detected",
+  "detected_objects": [
+    {
+      "object_id": "tv_01",
+      "class": "tv",
+      "confidence": 0.88,
+      "bbox": [
+        0,
+        79,
+        800,
+        536
+      ],
+      "mask_path": "mask_38c65d5d_tv_01.png",
+      "mask_url": "/storage/masks/mask_38c65d5d_tv_01.png",
+      "action": "REMOVE",
+      "fixed": false
+    }
+  ],
+  "voice_transcript": null,
+  "arrangement_plan": null
+}
