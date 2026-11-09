@@ -18,14 +18,15 @@ export const VoiceRecorder: React.FC<VoiceRecorderProps> = ({
   const [transcript, setTranscript] = useState('');
   const [isProcessing, setIsProcessing] = useState(false);
   const [statusText, setStatusText] = useState('');
+  const [transcriptionError, setTranscriptionError] = useState<string | null>(null);
   const [manualText, setManualText] = useState('');
   const [activePreset, setActivePreset] = useState<string | null>(null);
+  const [transcriptionConfirmed, setTranscriptionConfirmed] = useState(false);
 
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   const audioChunksRef = useRef<Blob[]>([]);
-  const recognitionRef = useRef<any>(null);
 
-  // Suggested Tanglish presets for instant judging demo
+  // Suggested Tanglish presets for quick demo & testing
   const presets = [
     {
       label: "Remove chairs & keep sofa",
@@ -47,32 +48,16 @@ export const VoiceRecorder: React.FC<VoiceRecorderProps> = ({
       text: "Neat ah arrange pannunga",
       desc: "Full space rearrangement",
     },
+    {
+      label: "Remove all books & keep sofas",
+      text: "Remove all books and keep both sofas.",
+      desc: "Plural & Multi-object test",
+    },
   ];
 
-  // Initialize Web Speech API for real-time live preview if supported
-  useEffect(() => {
-    const SpeechRecognition =
-      (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
-    if (SpeechRecognition) {
-      const recognition = new SpeechRecognition();
-      recognition.continuous = true;
-      recognition.interimResults = true;
-      recognition.lang = 'en-IN'; // Works for Indian-English and Tanglish phonetic capture
-
-      recognition.onresult = (event: any) => {
-        let current = '';
-        for (let i = event.resultIndex; i < event.results.length; ++i) {
-          current += event.results[i][0].transcript;
-        }
-        if (current) setTranscript(current);
-      };
-
-      recognition.onerror = () => {};
-      recognitionRef.current = recognition;
-    }
-  }, []);
-
   const startRecording = async () => {
+    setTranscriptionError(null);
+    setTranscriptionConfirmed(false);
     try {
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
       audioChunksRef.current = [];
@@ -92,15 +77,10 @@ export const VoiceRecorder: React.FC<VoiceRecorderProps> = ({
       mediaRecorder.start();
       setIsRecording(true);
       setStatusText('Listening in Tanglish / Tamil / English...');
-
-      if (recognitionRef.current) {
-        try {
-          recognitionRef.current.start();
-        } catch {}
-      }
-    } catch (err) {
+    } catch (err: any) {
       console.warn('Microphone access denied or unavailable', err);
-      setStatusText('Microphone unavailable. Use preset or type instruction.');
+      setTranscriptionError('Microphone unavailable or permission denied. Please use the text input below.');
+      setStatusText('');
     }
   };
 
@@ -108,38 +88,36 @@ export const VoiceRecorder: React.FC<VoiceRecorderProps> = ({
     if (mediaRecorderRef.current && isRecording) {
       mediaRecorderRef.current.stop();
       setIsRecording(false);
-      setStatusText('Processing audio with Gnani Prisma...');
-      if (recognitionRef.current) {
-        try {
-          recognitionRef.current.stop();
-        } catch {}
-      }
+      setStatusText('Sending audio to Gnani Prisma STT...');
     }
   };
 
   const handleAudioCaptured = async (audioBlob: Blob) => {
     setIsProcessing(true);
-    try {
-      // Send audio to backend
-      const sttRes: TranscriptResult = await transcribeAudio(roomId, audioBlob);
-      const text = sttRes.transcript || transcript;
-      setTranscript(text);
+    setTranscriptionError(null);
+    setTranscriptionConfirmed(false);
 
-      if (text) {
-        setStatusText('Resolving intent to object actions...');
-        const plan = await parseInstructions(roomId, text);
+    try {
+      // Send audio to backend Gnani Prisma v2.5 endpoint
+      const sttRes: TranscriptResult = await transcribeAudio(roomId, audioBlob);
+
+      if (sttRes.success && sttRes.transcript) {
+        setTranscript(sttRes.transcript);
+        setTranscriptionConfirmed(true);
+        setStatusText('Generating structured action plan...');
+
+        const plan = await parseInstructions(roomId, sttRes.transcript);
         onInstructionsParsed(plan);
-        setStatusText('Plan created successfully!');
+        setStatusText('Action plan created successfully!');
       } else {
-        setStatusText('Could not catch instruction. Try a demo preset.');
+        const err = sttRes.error || 'Gnani Prisma could not transcribe audio. Please re-record or type your instruction.';
+        setTranscriptionError(err);
+        setStatusText('');
       }
     } catch (err: any) {
-      console.error(err);
-      // Fallback: if backend STT had issues, parse what live recognition heard
-      if (transcript) {
-        const plan = await parseInstructions(roomId, transcript);
-        onInstructionsParsed(plan);
-      }
+      console.error('Transcription error:', err);
+      setTranscriptionError(err.message || 'Audio upload failed. Check connection.');
+      setStatusText('');
     } finally {
       setIsProcessing(false);
     }
@@ -148,18 +126,30 @@ export const VoiceRecorder: React.FC<VoiceRecorderProps> = ({
   const handleApplyText = async (textToApply: string) => {
     if (!textToApply.trim()) return;
     setIsProcessing(true);
-    setStatusText('Parsing Tanglish instruction...');
+    setTranscriptionError(null);
+    setStatusText('Processing instruction...');
     setTranscript(textToApply);
+
     try {
       await transcribeText(roomId, textToApply);
+      setTranscriptionConfirmed(true);
       const plan = await parseInstructions(roomId, textToApply);
       onInstructionsParsed(plan);
       setStatusText('Action plan generated!');
     } catch (err: any) {
-      alert(`Error: ${err.message || 'Failed to process instruction'}`);
+      setTranscriptionError(`Error: ${err.message || 'Failed to process instruction'}`);
+      setStatusText('');
     } finally {
       setIsProcessing(false);
     }
+  };
+
+  const handleRerecord = () => {
+    setTranscript('');
+    setTranscriptionError(null);
+    setTranscriptionConfirmed(false);
+    setStatusText('Ready to record');
+    setActivePreset(null);
   };
 
   return (
@@ -200,12 +190,13 @@ export const VoiceRecorder: React.FC<VoiceRecorderProps> = ({
             disabled={disabled || isProcessing}
             className={`w-20 h-20 sm:w-24 sm:h-24 rounded-full flex items-center justify-center transition-all duration-300 shadow-2xl ${
               isRecording
-                ? 'bg-rose-500 text-white scale-110 shadow-rose-500/50 pulse-ring'
+                ? 'bg-rose-500 text-white scale-110 shadow-rose-500/50 ring-4 ring-rose-500/30 animate-pulse'
                 : 'bg-gradient-to-tr from-emerald-500 to-teal-400 text-slate-950 hover:scale-105 shadow-emerald-500/30'
             } ${disabled || isProcessing ? 'opacity-50 cursor-not-allowed' : 'cursor-pointer'}`}
+            title={isRecording ? 'Click to stop recording' : 'Click to start recording voice instruction'}
           >
             {isRecording ? (
-              <MicOff className="w-8 h-8 sm:w-10 sm:h-10 animate-pulse" />
+              <MicOff className="w-8 h-8 sm:w-10 sm:h-10" />
             ) : (
               <Mic className="w-8 h-8 sm:w-10 sm:h-10" />
             )}
@@ -214,10 +205,10 @@ export const VoiceRecorder: React.FC<VoiceRecorderProps> = ({
 
         <div className="text-center">
           <span className="text-sm font-bold text-slate-900 dark:text-white block">
-            {isRecording ? 'Listening... Tap to Stop' : 'Tap Microphone & Speak'}
+            {isRecording ? 'Recording... Tap again to finish' : 'Tap Microphone to Speak'}
           </span>
           <span className="text-xs text-slate-500 dark:text-slate-400 mt-0.5 block">
-            {statusText || 'Example: "Indha rendu chairs vendaam, sofa venum"'}
+            {statusText || 'Example: "Table and chair remove pannunga. Remaining arrange pannunga."'}
           </span>
         </div>
 
@@ -227,24 +218,48 @@ export const VoiceRecorder: React.FC<VoiceRecorderProps> = ({
             {[...Array(16)].map((_, i) => (
               <div
                 key={i}
-                className="w-1 bg-emerald-500 rounded-full wave-bar"
-                style={{ animationDelay: `${(i % 5) * 0.1}s` }}
+                className="w-1 bg-emerald-500 rounded-full h-full animate-bounce"
+                style={{ animationDelay: `${(i % 5) * 0.12}s` }}
               />
             ))}
           </div>
         )}
       </div>
 
-      {/* Live Transcript Display Box */}
-      {transcript && (
+      {/* Transcription Error Banner */}
+      {transcriptionError && (
+        <div className="mt-4 p-4 rounded-2xl bg-amber-500/10 border border-amber-500/30 text-amber-800 dark:text-amber-200 text-xs flex items-start gap-3 relative z-10">
+          <AlertCircle className="w-4 h-4 text-amber-500 shrink-0 mt-0.5" />
+          <div className="flex-1">
+            <p className="font-semibold">{transcriptionError}</p>
+            <p className="text-[11px] text-amber-700/80 dark:text-amber-300/80 mt-0.5">
+              You can type your Tanglish instruction directly in the text box below or click any demo preset.
+            </p>
+          </div>
+        </div>
+      )}
+
+      {/* Confirmed Transcript Display Box with Re-record button */}
+      {transcript && transcriptionConfirmed && (
         <div className="mt-4 p-4 rounded-2xl bg-slate-50 dark:bg-slate-950/80 border border-slate-200 dark:border-slate-800 relative z-10">
           <div className="flex items-center justify-between text-xs text-slate-500 dark:text-slate-400 mb-1.5">
             <span className="font-semibold text-emerald-600 dark:text-emerald-400 flex items-center gap-1.5">
-              <CheckCircle2 className="w-3.5 h-3.5" /> Transcribed via Gnani Prisma:
+              <CheckCircle2 className="w-3.5 h-3.5" /> Transcribed via Gnani Prisma v2.5:
             </span>
-            <span className="font-mono text-[11px] bg-slate-200 dark:bg-slate-900 px-2 py-0.5 rounded border border-slate-300 dark:border-slate-800 text-slate-700 dark:text-slate-300">
-              Tanglish
-            </span>
+            <div className="flex items-center gap-2">
+              <span className="font-mono text-[11px] bg-slate-200 dark:bg-slate-900 px-2 py-0.5 rounded border border-slate-300 dark:border-slate-800 text-slate-700 dark:text-slate-300">
+                Tanglish / Tamil
+              </span>
+              <button
+                type="button"
+                onClick={handleRerecord}
+                className="flex items-center gap-1 text-[11px] text-slate-500 hover:text-slate-800 dark:hover:text-slate-200 transition-colors"
+                title="Clear and re-record"
+              >
+                <RefreshCw className="w-3 h-3" />
+                Re-record
+              </button>
+            </div>
           </div>
           <p className="text-base sm:text-lg font-medium text-slate-900 dark:text-slate-100 font-mono">
             "{transcript}"
@@ -252,7 +267,7 @@ export const VoiceRecorder: React.FC<VoiceRecorderProps> = ({
         </div>
       )}
 
-      {/* 1-Click Tanglish Preset Buttons for Hackathon Judges */}
+      {/* 1-Click Tanglish Preset Buttons */}
       <div className="mt-6 pt-6 border-t border-slate-200 dark:border-slate-800/80 relative z-10">
         <div className="flex items-center justify-between mb-3">
           <span className="text-xs font-bold uppercase tracking-wider text-slate-500 dark:text-slate-400 flex items-center gap-1.5">
@@ -294,7 +309,7 @@ export const VoiceRecorder: React.FC<VoiceRecorderProps> = ({
         </div>
       </div>
 
-      {/* Manual Text Input Bar (Noisy Environment Fallback) */}
+      {/* Manual Text Input Bar (Fallback) */}
       <div className="mt-5 relative z-10">
         <form
           onSubmit={(e) => {
@@ -307,7 +322,7 @@ export const VoiceRecorder: React.FC<VoiceRecorderProps> = ({
             type="text"
             value={manualText}
             onChange={(e) => setManualText(e.target.value)}
-            placeholder="Or type here (e.g. 'Chair vendaam, sofa venum')..."
+            placeholder="Or type here (e.g. 'Table and chair remove pannunga. Remaining arrange pannunga.')..."
             className="flex-1 bg-slate-50 dark:bg-slate-950/80 border border-slate-200 dark:border-slate-800 rounded-xl px-4 py-2.5 text-xs sm:text-sm text-slate-900 dark:text-white placeholder-slate-400 dark:placeholder-slate-500 focus:outline-none focus:border-emerald-500 transition-colors"
           />
           <button
@@ -323,4 +338,3 @@ export const VoiceRecorder: React.FC<VoiceRecorderProps> = ({
     </div>
   );
 };
-

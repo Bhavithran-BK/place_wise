@@ -491,6 +491,8 @@ export default function App() {
                   selectedObjectId={selectedObjectId}
                   onSelectObject={setSelectedObjectId}
                   onUpdateObject={handleUpdateObject}
+                  clarificationMessage={instructionPlan?.clarification_message}
+                  clarificationCandidates={instructionPlan?.clarification_candidates}
                 />
               </div>
             </div>
@@ -529,6 +531,23 @@ export default function App() {
             {/* Instruction Plan Feedback Box */}
             {instructionPlan && (
               <div className="mt-6 p-6 rounded-3xl bg-white dark:bg-slate-900/90 border border-emerald-500/30 shadow-2xl transition-colors">
+                {/* Ambiguity or Contradiction Alert if clarification is needed */}
+                {instructionPlan.clarification_required && (
+                  <div className="mb-4 p-4 rounded-2xl bg-amber-500/10 border border-amber-500/30 text-amber-900 dark:text-amber-200 text-xs flex items-start gap-3 shadow-sm">
+                    <span className="text-base">⚠️</span>
+                    <div>
+                      <span className="font-bold block text-sm mb-0.5">Clarification Needed:</span>
+                      <p>{instructionPlan.clarification_message}</p>
+                      {instructionPlan.clarification_candidates && instructionPlan.clarification_candidates.length > 0 && (
+                        <p className="mt-1 text-[11px] text-amber-800 dark:text-amber-300">
+                          Candidate objects: <span className="font-mono font-bold">{instructionPlan.clarification_candidates.join(', ')}</span>.
+                          Tap the buttons below to manually set KEEP or REMOVE.
+                        </p>
+                      )}
+                    </div>
+                  </div>
+                )}
+
                 <div className="flex flex-wrap items-center justify-between gap-3 pb-3 border-b border-slate-200 dark:border-slate-800">
                   <div className="flex items-center gap-2">
                     <span className="text-xs font-bold uppercase tracking-wider text-emerald-700 dark:text-emerald-400 bg-emerald-500/10 px-3 py-1 rounded-full border border-emerald-500/20">
@@ -567,28 +586,56 @@ export default function App() {
                   </div>
                 </div>
 
-                <div className="grid grid-cols-2 sm:grid-cols-3 gap-3 mt-4">
-                  {instructionPlan.actions.map((act) => (
-                    <div
-                      key={act.object_id}
-                      className={`p-3 rounded-xl border flex items-center justify-between ${
-                        act.action === 'KEEP'
-                          ? 'border-emerald-500/40 bg-emerald-500/10 text-emerald-800 dark:text-emerald-300'
-                          : 'border-rose-500/40 bg-rose-500/10 text-rose-800 dark:text-rose-300'
-                      }`}
-                    >
-                      <span className="font-mono text-xs font-bold">{act.object_id}</span>
-                      <span
-                        className={`text-[10px] font-extrabold px-2 py-0.5 rounded ${
-                          act.action === 'KEEP'
-                            ? 'bg-emerald-500 text-slate-950'
-                            : 'bg-rose-500 text-white'
+                <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-3 mt-4">
+                  {instructionPlan.actions.map((act) => {
+                    const isCandidate = instructionPlan.clarification_candidates?.includes(act.object_id);
+                    return (
+                      <div
+                        key={act.object_id}
+                        className={`p-3 rounded-xl border flex items-center justify-between transition-all ${
+                          isCandidate
+                            ? 'ring-2 ring-amber-500/50 border-amber-500 bg-amber-500/10'
+                            : act.action === 'KEEP'
+                            ? 'border-emerald-500/40 bg-emerald-500/10 text-emerald-800 dark:text-emerald-300'
+                            : 'border-rose-500/40 bg-rose-500/10 text-rose-800 dark:text-rose-300'
                         }`}
                       >
-                        {act.action}
-                      </span>
-                    </div>
-                  ))}
+                        <div className="flex flex-col min-w-0">
+                          <span className="font-mono text-xs font-bold truncate">{act.object_id}</span>
+                          {act.object_class && (
+                            <span className="text-[10px] text-slate-500 dark:text-slate-400 capitalize">
+                              {act.object_class}
+                            </span>
+                          )}
+                        </div>
+
+                        {/* Interactive toggle buttons for manual correction */}
+                        <div className="flex items-center gap-1">
+                          <button
+                            type="button"
+                            onClick={() => {
+                              const newAction = act.action === 'KEEP' ? 'REMOVE' : 'KEEP';
+                              handleToggleAction(act.object_id, newAction);
+                              setInstructionPlan({
+                                ...instructionPlan,
+                                actions: instructionPlan.actions.map((a) =>
+                                  a.object_id === act.object_id ? { ...a, action: newAction } : a
+                                ),
+                              });
+                            }}
+                            className={`text-[10px] font-extrabold px-2.5 py-1 rounded transition-transform active:scale-95 cursor-pointer shadow-sm ${
+                              act.action === 'KEEP'
+                                ? 'bg-emerald-500 text-slate-950 hover:bg-emerald-600'
+                                : 'bg-rose-500 text-white hover:bg-rose-600'
+                            }`}
+                            title="Click to toggle KEEP / REMOVE"
+                          >
+                            {act.action}
+                          </button>
+                        </div>
+                      </div>
+                    );
+                  })}
                 </div>
               </div>
             )}
