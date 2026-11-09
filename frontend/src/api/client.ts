@@ -78,14 +78,28 @@ export const transcribeText = async (
 export const parseInstructions = async (
   id: string,
   transcript: string,
-): Promise<InstructionResult> =>
-  json(
+): Promise<InstructionResult> => {
+  const data = await json<any>(
     await fetch(`${API}/api/rooms/${id}/instructions`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ transcript }),
     }),
   );
+  const plan = data.action_plan || data;
+  return {
+    ...data,
+    mode: plan.mode || data.mode || 'REARRANGE_ALL',
+    actions: plan.actions || data.actions || [],
+    rearrange_remaining: plan.rearrange_remaining ?? data.rearrange_remaining ?? false,
+    clarification_required: plan.clarification_required ?? data.clarification_required ?? false,
+    clarification_message: plan.clarification_message ?? data.clarification_message ?? null,
+    clarification_candidates: plan.clarification_candidates ?? data.clarification_candidates ?? [],
+    parsed_keep: plan.parsed_keep ?? data.parsed_keep ?? [],
+    parsed_remove: plan.parsed_remove ?? data.parsed_remove ?? [],
+    raw_transcript: plan.raw_transcript || data.raw_transcript || transcript,
+  };
+};
 
 export const speakConfirmation = async (
   id: string,
