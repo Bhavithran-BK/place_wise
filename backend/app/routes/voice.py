@@ -30,15 +30,28 @@ class SpeakRequest(BaseModel):
 @router.post("/{room_id}/transcribe")
 async def transcribe_room_audio(room_id: str, file: UploadFile = File(...)):
     """
-    Accepts recorded voice audio (WAV/WebM), saves it temporarily,
+    Accepts recorded voice audio (WAV/WebM/MP3/OGG), validates file type and size,
     and calls Gnani Prisma v2.5 STT to generate a transcript.
     """
     meta = load_room_meta(room_id)
     
+    # Validate file extension
+    suffix = Path(file.filename or "recording.wav").suffix.lower() or ".wav"
+    allowed_exts = {".wav", ".webm", ".ogg", ".mp3", ".m4a", ".flac"}
+    if suffix not in allowed_exts:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Unsupported audio format '{suffix}'. Allowed formats: {', '.join(sorted(allowed_exts))}"
+        )
+
     # Save uploaded audio to temp file
-    suffix = Path(file.filename or "recording.wav").suffix or ".wav"
     with tempfile.NamedTemporaryFile(delete=False, suffix=suffix) as tmp:
-        tmp.write(await file.read())
+        content = await file.read()
+        if len(content) == 0:
+            raise HTTPException(status_code=400, detail="Uploaded audio file is empty (0 bytes).")
+        if len(content) > 25 * 1024 * 1024:
+            raise HTTPException(status_code=400, detail="Uploaded audio file exceeds maximum size of 25 MB.")
+        tmp.write(content)
         tmp_path = tmp.name
 
     try:
@@ -52,7 +65,15 @@ async def transcribe_room_audio(room_id: str, file: UploadFile = File(...)):
         meta["voice_transcript"] = result["transcript"]
         save_room_meta(room_id, meta)
 
-    return result
+    return {
+        "success": result.get("success", False),
+        "transcript": result.get("transcript", ""),
+        "language": result.get("language", "Tanglish"),
+        "provider": result.get("provider", "Gnani Prisma"),
+        "confidence": result.get("confidence", 0.0),
+        "words": result.get("words", []),
+        "error": result.get("error")
+    }
 
 @router.post("/{room_id}/transcribe-text")
 async def transcribe_text_fallback(room_id: str, req: TextInstructionRequest):
@@ -63,7 +84,15 @@ async def transcribe_text_fallback(room_id: str, req: TextInstructionRequest):
     result = stt_service.transcribe_text(req.text, req.language)
     meta["voice_transcript"] = req.text
     save_room_meta(room_id, meta)
-    return result
+    return {
+        "success": result.get("success", True),
+        "transcript": result.get("transcript", req.text),
+        "language": result.get("language", "Tanglish"),
+        "provider": result.get("provider", "Manual Input"),
+        "confidence": result.get("confidence", 1.0),
+        "words": result.get("words", []),
+        "error": result.get("error")
+    }
 
 @router.post("/{room_id}/instructions")
 async def parse_room_instructions(room_id: str, req: ParseInstructionRequest):
@@ -92,7 +121,21 @@ async def parse_room_instructions(room_id: str, req: ParseInstructionRequest):
     meta["instruction_plan"] = parsed
     save_room_meta(room_id, meta)
 
-    return parsed
+    # Return standardized structure with full backward compatibility
+    return {
+        "success": True,
+        "room_id": room_id,
+        "action_plan": parsed,
+        "mode": parsed["mode"],
+        "actions": parsed["actions"],
+        "rearrange_remaining": parsed["rearrange_remaining"],
+        "clarification_required": parsed["clarification_required"],
+        "clarification_message": parsed.get("clarification_message"),
+        "clarification_candidates": parsed.get("clarification_candidates", []),
+        "parsed_keep": parsed.get("parsed_keep", []),
+        "parsed_remove": parsed.get("parsed_remove", []),
+        "raw_transcript": parsed.get("raw_transcript", req.transcript)
+    }
 
 @router.post("/{room_id}/speak")
 async def generate_room_spoken_feedback(room_id: str, req: SpeakRequest):

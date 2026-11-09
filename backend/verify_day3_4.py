@@ -1,8 +1,37 @@
 import sys
-import requests
+import os
+from pathlib import Path
 import json
+import requests
 
 BACKEND_URL = "http://127.0.0.1:8000"
+
+# Setup resilient client: uses live server if running, or in-memory TestClient
+try:
+    r = requests.get(f"{BACKEND_URL}/api/health", timeout=0.5)
+    if r.status_code == 200:
+        client = requests
+    else:
+        raise Exception("Server not running on port 8000")
+except Exception:
+    sys.path.insert(0, str(Path(__file__).resolve().parent))
+    from starlette.testclient import TestClient
+    from app.main import app
+    _tc = TestClient(app)
+    class TestClientAdapter:
+        @staticmethod
+        def post(url, **kwargs):
+            endpoint = url.replace(BACKEND_URL, "")
+            return _tc.post(endpoint, **kwargs)
+        @staticmethod
+        def get(url, **kwargs):
+            endpoint = url.replace(BACKEND_URL, "")
+            return _tc.get(endpoint, **kwargs)
+        @staticmethod
+        def patch(url, **kwargs):
+            endpoint = url.replace(BACKEND_URL, "")
+            return _tc.patch(endpoint, **kwargs)
+    client = TestClientAdapter()
 
 def print_step(name, status=None):
     if status is None:
@@ -20,19 +49,19 @@ def run_day3_4_verification():
     # 1. Setup a benchmark room with diverse objects
     print_step("1. Preparing benchmark room with multiple objects")
     with open("backend/storage/uploads/demo_room_01.jpg", "rb") as f:
-        res = requests.post(f"{BACKEND_URL}/api/rooms", files={"file": ("demo.jpg", f, "image/jpeg")})
+        res = client.post(f"{BACKEND_URL}/api/rooms", files={"file": ("demo.jpg", f, "image/jpeg")})
     assert res.status_code == 200
     room_id = res.json()["room_id"]
     
     # Run detection
-    d_res = requests.post(f"{BACKEND_URL}/api/rooms/{room_id}/detect")
+    d_res = client.post(f"{BACKEND_URL}/api/rooms/{room_id}/detect")
     assert d_res.status_code == 200
     objs = d_res.json()["objects"]
     print_step(f"Room {room_id} ready with {len(objs)} detected objects: {[o['class'] for o in objs]}", True)
 
     # 2. Test Pattern 1: REMOVE ONLY ("Indha chair-um table-um vendaam")
     print_step("2. Pattern 1: REMOVE ONLY ('Indha chair-um table-um vendaam')")
-    p1 = requests.post(
+    p1 = client.post(
         f"{BACKEND_URL}/api/rooms/{room_id}/instructions",
         json={"transcript": "Indha chair-um table-um vendaam"}
     ).json()
@@ -42,7 +71,7 @@ def run_day3_4_verification():
 
     # 3. Test Pattern 2: KEEP ONLY ("Sofa, TV, bookshelf ellame venum")
     print_step("3. Pattern 2: KEEP ONLY ('Sofa, TV, bookshelf ellame venum')")
-    p2 = requests.post(
+    p2 = client.post(
         f"{BACKEND_URL}/api/rooms/{room_id}/instructions",
         json={"transcript": "Sofa, TV, bookshelf ellame venum"}
     ).json()
@@ -52,7 +81,7 @@ def run_day3_4_verification():
 
     # 4. Test Pattern 3: KEEP & REMOVE Combo ("Indha rendu chairs vendaam. Sofa venum.")
     print_step("4. Pattern 3: KEEP & REMOVE ('Indha rendu chairs vendaam. Sofa venum.')")
-    p3 = requests.post(
+    p3 = client.post(
         f"{BACKEND_URL}/api/rooms/{room_id}/instructions",
         json={"transcript": "Indha rendu chairs vendaam. Sofa venum."}
     ).json()
@@ -63,7 +92,7 @@ def run_day3_4_verification():
 
     # 5. Test Pattern 4: ARRANGE ALL ("Neat ah arrange pannunga")
     print_step("5. Pattern 4: ARRANGE ALL ('Neat ah arrange pannunga')")
-    p4 = requests.post(
+    p4 = client.post(
         f"{BACKEND_URL}/api/rooms/{room_id}/instructions",
         json={"transcript": "Neat ah arrange pannunga"}
     ).json()
@@ -74,11 +103,11 @@ def run_day3_4_verification():
     # 6. Test Pattern 5: AMBIGUOUS REFERENCE (Singular 'Indha chair vendaam' when multiple exist)
     print_step("6. Pattern 5: AMBIGUITY CHECK (Single 'chair' when multiple exist in room)")
     # Inject 2 chairs into room objects to verify ambiguity resolution
-    patch_chairs = requests.patch(f"{BACKEND_URL}/api/rooms/{room_id}/objects", json=[
+    patch_chairs = client.patch(f"{BACKEND_URL}/api/rooms/{room_id}/objects", json=[
         {"object_id": "chair_01", "class_name": "chair", "action": None},
         {"object_id": "chair_02", "class_name": "chair", "action": None}
     ])
-    p5 = requests.post(
+    p5 = client.post(
         f"{BACKEND_URL}/api/rooms/{room_id}/instructions",
         json={"transcript": "Indha chair vendaam"}
     ).json()
@@ -88,7 +117,7 @@ def run_day3_4_verification():
 
     # 7. Test Spoken Voice Confirmation (POST /api/rooms/{id}/speak)
     print_step("7. Spoken Confirmation Loop (POST /api/rooms/{id}/speak)")
-    speak_res = requests.post(f"{BACKEND_URL}/api/rooms/{room_id}/speak", json={}).json()
+    speak_res = client.post(f"{BACKEND_URL}/api/rooms/{room_id}/speak", json={}).json()
     assert "text" in speak_res
     print_step(f"Spoken feedback generated: \"{speak_res['text']}\"", True)
 
