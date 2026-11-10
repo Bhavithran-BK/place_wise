@@ -6,12 +6,13 @@ from app.schemas.room import DetectionResponse, DetectedObject, ObjectUpdateRequ
 from app.routes.rooms import load_room_meta, save_room_meta
 from app.services.object_detector import RoomObjectDetector
 from app.services.segmentation import ObjectSegmenter
-from app.core.config import MASKS_DIR
+from app.services.layout_engine import SpatialLayoutEngine
+from app.core.config import MASKS_DIR, OBJECTS_DIR, FIXED_CLASSES, CLASS_CATEGORIES
 
 router = APIRouter(prefix="/api/rooms", tags=["vision"])
 
 detector = RoomObjectDetector()
-segmenter = ObjectSegmenter(MASKS_DIR)
+segmenter = ObjectSegmenter(MASKS_DIR, OBJECTS_DIR)
 
 class AddObjectRequest(BaseModel):
     class_name: str
@@ -22,7 +23,8 @@ class AddObjectRequest(BaseModel):
 async def detect_room_objects(room_id: str):
     """
     Step 2: Detect & Segment Objects.
-    Uses YOLOv8 + Segmentation to identify objects and output binary masks.
+    Uses YOLOv8s-seg + Instance Segmentation to identify objects and output binary masks and cutouts.
+    Prepares reusable scene manifest.
     """
     meta = load_room_meta(room_id)
     image_path = meta.get("image_path")
@@ -33,6 +35,29 @@ async def detect_room_objects(room_id: str):
     objects = detector.detect_objects(image_path, room_id)
     meta["detected_objects"] = objects
     meta["status"] = "detected"
+
+    # Initialize reusable scene manifest
+    engine = SpatialLayoutEngine(meta["width"], meta["height"])
+    clean_bg_url = f"/storage/results/cleaned_{room_id}.jpg"
+    plan_objs = [
+        {
+            "id": o["object_id"],
+            "class": o["class"],
+            "action": "KEEP",
+            "from": o["bbox"],
+            "to": o["bbox"],
+            "fixed": o.get("fixed", False)
+        }
+        for o in objects
+    ]
+    manifest = engine.build_scene_manifest(
+        room_id=room_id,
+        original_image_url=meta.get("image_url", ""),
+        clean_background_url=clean_bg_url,
+        plan_objects=plan_objs
+    )
+    meta["scene_manifest"] = manifest
+
     save_room_meta(room_id, meta)
 
     return DetectionResponse(
@@ -48,7 +73,7 @@ VALID_ACTIONS = {"KEEP", "REMOVE", "MOVE", "FIXED", None}
 async def update_room_objects(room_id: str, updates: List[ObjectUpdateRequest]):
     """
     Allows user corrections of detected objects (rename class, mark KEEP/REMOVE/FIXED).
-    Validates object IDs and action values, and synchronizes the canonical action plan.
+    Validates object IDs and action values, and synchronizes the canonical action plan and scene manifest.
     """
     meta = load_room_meta(room_id)
     current_objs = {obj["object_id"]: obj for obj in meta.get("detected_objects", [])}
@@ -71,19 +96,24 @@ async def update_room_objects(room_id: str, updates: List[ObjectUpdateRequest]):
         if upd.object_id in current_objs:
             target = current_objs[upd.object_id]
             if upd.class_name:
-                target["class"] = upd.class_name.strip().lower()
+                c = upd.class_name.strip().lower()
+                target["class"] = c
+                target["class_name"] = c
+                target["category"] = CLASS_CATEGORIES.get(c, "furniture")
             if upd.action is not None:
                 target["action"] = upd.action.upper()
             if upd.fixed is not None:
                 target["fixed"] = upd.fixed
         else:
-            # Upsert object if injected/added via PATCH
             cls_n = (upd.class_name or "furniture").strip().lower()
             current_objs[upd.object_id] = {
                 "object_id": upd.object_id,
                 "class": cls_n,
+                "class_name": cls_n,
+                "category": CLASS_CATEGORIES.get(cls_n, "furniture"),
                 "confidence": 1.0,
                 "bbox": [50, 50, 150, 150],
+                "bbox_xyxy": [50, 50, 150, 150],
                 "action": upd.action.upper() if upd.action else None,
                 "fixed": bool(upd.fixed)
             }
@@ -103,7 +133,6 @@ async def update_room_objects(room_id: str, updates: List[ObjectUpdateRequest]):
         "raw_transcript": meta.get("voice_transcript", "")
     }
 
-    # Update or insert into action plan
     existing_actions_map = {a["object_id"]: a for a in plan.get("actions", [])}
     for upd in updates:
         action_val = upd.action.upper() if upd.action else "KEEP"
@@ -120,7 +149,6 @@ async def update_room_objects(room_id: str, updates: List[ObjectUpdateRequest]):
                 "reason": "Manually corrected by user"
             }
 
-    # Ensure all detected objects are in plan actions
     for obj in meta["detected_objects"]:
         oid = obj["object_id"]
         if oid not in existing_actions_map:
@@ -132,8 +160,6 @@ async def update_room_objects(room_id: str, updates: List[ObjectUpdateRequest]):
             }
 
     plan["actions"] = list(existing_actions_map.values())
-    
-    # Recalculate mode
     has_rem = any(a["action"] == "REMOVE" for a in plan["actions"])
     has_keep = any(a["action"] == "KEEP" for a in plan["actions"])
     if has_rem and has_keep:
@@ -146,13 +172,36 @@ async def update_room_objects(room_id: str, updates: List[ObjectUpdateRequest]):
         plan["mode"] = "REARRANGE_ALL"
 
     meta["instruction_plan"] = plan
+
+    # Synchronize scene manifest
+    engine = SpatialLayoutEngine(meta["width"], meta["height"])
+    clean_bg_url = meta.get("cleaned_image_url") or f"/storage/results/cleaned_{room_id}.jpg"
+    plan_objs = [
+        {
+            "id": o["object_id"],
+            "class": o["class"],
+            "action": o.get("action") or "KEEP",
+            "from": o["bbox"],
+            "to": o["bbox"],
+            "fixed": o.get("fixed", False)
+        }
+        for o in meta["detected_objects"]
+    ]
+    meta["scene_manifest"] = engine.build_scene_manifest(
+        room_id=room_id,
+        original_image_url=meta.get("image_url", ""),
+        clean_background_url=clean_bg_url,
+        plan_objects=plan_objs
+    )
+
     save_room_meta(room_id, meta)
 
     return {
         "status": "success",
         "room_id": room_id,
         "objects": meta["detected_objects"],
-        "action_plan": plan
+        "action_plan": plan,
+        "scene_manifest": meta["scene_manifest"]
     }
 
 @router.post("/{room_id}/objects")
@@ -167,17 +216,22 @@ async def add_manual_object(room_id: str, req: AddObjectRequest):
     idx = len([o for o in existing_objs if o["class"] == req.class_name]) + 1
     obj_id = f"{req.class_name}_{idx:02d}"
 
-    mask_file = segmenter.generate_mask(image_path, req.bbox, f"{room_id}_{obj_id}")
+    mask_fn, cutout_fn = segmenter.generate_mask_and_cutout(image_path, req.bbox, f"{room_id}_{obj_id}")
 
     new_obj = {
         "object_id": obj_id,
         "class": req.class_name,
-        "confidence": 1.0,  # User confirmed
+        "class_name": req.class_name,
+        "category": CLASS_CATEGORIES.get(req.class_name, "furniture"),
+        "confidence": 1.0,
         "bbox": req.bbox,
-        "mask_path": mask_file,
-        "mask_url": f"/storage/masks/{mask_file}",
+        "bbox_xyxy": req.bbox,
+        "mask_path": mask_fn,
+        "mask_url": f"/storage/masks/{mask_fn}",
+        "cutout_path": cutout_fn,
+        "cutout_url": f"/storage/objects/{cutout_fn}",
         "action": None,
-        "fixed": req.fixed
+        "fixed": req.fixed or req.class_name in FIXED_CLASSES
     }
 
     existing_objs.append(new_obj)
@@ -185,4 +239,3 @@ async def add_manual_object(room_id: str, req: AddObjectRequest):
     save_room_meta(room_id, meta)
 
     return {"status": "success", "object": new_obj}
-

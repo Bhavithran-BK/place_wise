@@ -114,12 +114,18 @@ export const speakConfirmation = async (
   );
 
 /* ── arrangement & rendering ── */
-export const arrangeRoom = async (id: string): Promise<any> =>
-  json(await fetch(`${API}/api/rooms/${id}/arrange`, { method: 'POST' }));
+export const arrangeRoom = async (id: string, strategy: string = 'balanced'): Promise<any> =>
+  json(
+    await fetch(`${API}/api/rooms/${id}/arrange?strategy=${encodeURIComponent(strategy)}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ strategy }),
+    }),
+  );
 
 export const renderOutputs = async (
   id: string,
-): Promise<{ status: string; plan_image_url: string; rearranged_image_url: string; plan: any }> =>
+): Promise<{ status: string; plan_image_url: string; rearranged_image_url: string; cleaned_image_url?: string; plan: any }> =>
   json(await fetch(`${API}/api/rooms/${id}/render`, { method: 'POST' }));
 
 export const getResults = async (id: string): Promise<any> =>

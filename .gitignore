@@ -35,4 +35,8 @@ Thumbs.db
 .vscode/
 .idea/
 *.log
+*.pt
+backend/storage/objects/*
+!backend/storage/objects/.gitkeep
+
 

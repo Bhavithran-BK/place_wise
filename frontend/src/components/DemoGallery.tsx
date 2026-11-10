@@ -1,5 +1,5 @@
 import React from 'react';
-import { Sparkles, ArrowRight, Home, Store, BedDouble } from 'lucide-react';
+import { Sparkles, ArrowRight, Home, Store, BedDouble, GraduationCap } from 'lucide-react';
 
 interface DemoGalleryProps {
   onSelectDemo: (demoPath: string) => void;
@@ -34,18 +34,27 @@ export const DemoGallery: React.FC<DemoGalleryProps> = ({ onSelectDemo }) => {
       icon: Store,
       prompt: 'Indha boxes and stool vendaam. Counter neat ah arrange pannunga.',
     },
+    {
+      id: 'demo-office',
+      title: 'Classroom / Study Office',
+      subtitle: 'Study desk, visitor chair, laptop & shelf',
+      tag: 'Scenario 4 • Workspace',
+      path: '/storage/uploads/demo_office.jpg',
+      icon: GraduationCap,
+      prompt: 'Visitor chair vendaam. Desk and shelf neat ah arrange pannunga.',
+    },
   ];
 
   return (
-    <div className="w-full max-w-5xl mx-auto mt-10">
+    <div className="w-full max-w-6xl mx-auto mt-10">
       <div className="flex items-center gap-2 mb-4 justify-center">
         <Sparkles className="w-4 h-4 text-emerald-400" />
-        <h3 className="text-xs font-bold uppercase tracking-wider text-slate-400">
-          Fast Evaluation — 1-Click Hackathon Scenarios
+        <h3 className="text-xs font-bold uppercase tracking-wider text-slate-500 dark:text-slate-400">
+          Fast Evaluation — 4 Pre-Loaded Hackathon Scenarios
         </h3>
       </div>
 
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-3.5">
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3.5">
         {demos.map((d) => {
           const Icon = d.icon;
           return (

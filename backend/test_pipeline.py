@@ -1,6 +1,10 @@
 import sys
 import os
-sys.path.insert(0, 'backend')
+from pathlib import Path
+
+BASE = Path(__file__).resolve().parent
+if str(BASE) not in sys.path:
+    sys.path.insert(0, str(BASE))
 
 from app.services.object_detector import RoomObjectDetector
 from app.services.instruction_parser import InstructionParser
@@ -15,7 +19,7 @@ print("=" * 60)
 # Step 1: Detect objects
 detector = RoomObjectDetector()
 room_id = "test_run_01"
-img_path = "backend/storage/uploads/demo_room_01.jpg"
+img_path = str(STORAGE_DIR / "uploads" / "demo_room_01.jpg")
 
 print("\n1. Detecting room objects...")
 objects = detector.detect_objects(img_path, room_id)
@@ -52,10 +56,12 @@ rendered = renderer.render_both_outputs(img_path, spatial_plan, room_id)
 print(f"   [Output 1] Annotated Plan: {rendered['plan_image_url']}")
 print(f"   [Output 2] Rearranged Photo: {rendered['rearranged_image_url']}")
 
-assert os.path.exists(f"backend{rendered['plan_image_url']}")
-assert os.path.exists(f"backend{rendered['rearranged_image_url']}")
+plan_disk_path = STORAGE_DIR / Path(rendered['plan_image_url'].replace('/storage/', ''))
+rearranged_disk_path = STORAGE_DIR / Path(rendered['rearranged_image_url'].replace('/storage/', ''))
+
+assert plan_disk_path.exists(), f"Plan image not found at {plan_disk_path}"
+assert rearranged_disk_path.exists(), f"Rearranged image not found at {rearranged_disk_path}"
 
 print("\n" + "=" * 60)
 print("SUCCESS: COMPLETE END-TO-END PIPELINE VERIFIED!")
 print("=" * 60)
-

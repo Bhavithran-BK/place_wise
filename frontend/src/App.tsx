@@ -39,8 +39,10 @@ export default function App() {
   const [renderResults, setRenderResults] = useState<{
     plan_image_url: string;
     rearranged_image_url: string;
+    cleaned_image_url?: string;
     plan: any;
   } | null>(null);
+  const [currentStrategy, setCurrentStrategy] = useState<'balanced' | 'spacious' | 'cozy'>('balanced');
   const [showMetrics, setShowMetrics] = useState(false);
 
   // Light / Dark mode state
@@ -216,7 +218,7 @@ export default function App() {
     setStatusMessage('Solving spatial geometry & overlap constraints...');
 
     try {
-      await arrangeRoom(currentRoom.room_id);
+      await arrangeRoom(currentRoom.room_id, currentStrategy);
       setStatusMessage('Inpainting removed objects & rendering outputs...');
       const rendered = await renderOutputs(currentRoom.room_id);
 
@@ -224,6 +226,27 @@ export default function App() {
       setActiveStep(4);
     } catch (err: any) {
       alert(`Arrangement failed: ${err.message || 'Error generating outputs'}`);
+    } finally {
+      setIsLoading(false);
+      setStatusMessage('');
+    }
+  };
+
+  // Alternative strategy regeneration (Balanced, Spacious, Cozy)
+  const handleRegenerateStrategy = async (strategy: 'balanced' | 'spacious' | 'cozy') => {
+    if (!currentRoom) return;
+    setIsLoading(true);
+    setStatusMessage(`Applying '${strategy}' spatial strategy with 0 collision...`);
+    setCurrentStrategy(strategy);
+
+    try {
+      await arrangeRoom(currentRoom.room_id, strategy);
+      setStatusMessage('Re-rendering photograph and annotated spatial plan...');
+      const rendered = await renderOutputs(currentRoom.room_id);
+      setRenderResults(rendered);
+      playVoiceFeedback(`Layout regenerated with ${strategy} spatial flow.`);
+    } catch (err: any) {
+      alert(`Strategy change failed: ${err.message || 'Error re-generating layout'}`);
     } finally {
       setIsLoading(false);
       setStatusMessage('');
@@ -666,8 +689,13 @@ export default function App() {
               originalImageUrl={currentRoom.image_url}
               planImageUrl={renderResults.plan_image_url}
               rearrangedImageUrl={renderResults.rearranged_image_url}
+              cleanedImageUrl={renderResults.cleaned_image_url}
+              plan={renderResults.plan}
               summary={renderResults.plan?.summary}
+              roomId={currentRoom.room_id}
               onRearrangeAgain={() => setActiveStep(3)}
+              onRegenerateStrategy={handleRegenerateStrategy}
+              isRegenerating={isLoading}
             />
           </div>
         )}

@@ -138,9 +138,10 @@ class GnaniSTT:
             }
 
     def _call_gnani_api(self, audio_path: str, lang: str, api_key: str) -> Dict[str, Any]:
-        """Executes multipart POST request to Gnani Prisma v2.5 endpoint."""
+        """Executes multipart POST request to Gnani Prisma / Vachana STT endpoint."""
         filename = Path(audio_path).name
         headers = {
+            "X-API-Key-ID": api_key,
             "Authorization": f"Bearer {api_key}",
             "token": api_key,
             "Accept": "application/json"
@@ -157,8 +158,14 @@ class GnaniSTT:
             mime_type = "audio/mpeg"
 
         with open(audio_path, "rb") as audio_file:
-            files = {"file": (filename, audio_file, mime_type)}
+            content = audio_file.read()
+            # Compatible with both Vachana STT v3 ('audio_file') and Prisma ('file')
+            files = {
+                "audio_file": (filename, content, mime_type),
+                "file": (filename, content, mime_type)
+            }
             data = {
+                "language_code": lang,
                 "lang": lang,
                 "language": lang,
                 "itn": "true",
@@ -191,14 +198,14 @@ class GnaniSTT:
         words = []
 
         if isinstance(res_data, dict):
-            if "result" in res_data and isinstance(res_data["result"], dict):
-                transcript = res_data["result"].get("transcript", "")
-                confidence = float(res_data["result"].get("confidence", 0.90))
-                words = res_data["result"].get("words", [])
-            elif "transcript" in res_data:
+            if "transcript" in res_data:
                 transcript = res_data.get("transcript", "")
                 confidence = float(res_data.get("confidence", 0.90))
                 words = res_data.get("words", [])
+            elif "result" in res_data and isinstance(res_data["result"], dict):
+                transcript = res_data["result"].get("transcript", "")
+                confidence = float(res_data["result"].get("confidence", 0.90))
+                words = res_data["result"].get("words", [])
             elif "text" in res_data:
                 transcript = res_data.get("text", "")
 
