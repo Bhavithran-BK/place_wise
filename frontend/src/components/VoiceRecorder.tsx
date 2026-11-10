@@ -9,6 +9,54 @@ interface VoiceRecorderProps {
   disabled?: boolean;
 }
 
+// Resamples audio buffer to 16kHz mono (optimal for Gnani Prisma STT)
+function downsampleTo16kHz(buffer: Float32Array, sampleRate: number): Float32Array {
+  if (sampleRate === 16000) return buffer;
+  const ratio = sampleRate / 16000;
+  const newLength = Math.round(buffer.length / ratio);
+  const result = new Float32Array(newLength);
+  for (let i = 0; i < newLength; i++) {
+    const srcIndex = Math.min(buffer.length - 1, Math.floor(i * ratio));
+    result[i] = buffer[srcIndex];
+  }
+  return result;
+}
+
+// Encodes raw 16kHz PCM samples into a standard 16-bit Mono WAV Blob
+function encodeWav(samples: Float32Array, sampleRate: number = 16000): Blob {
+  const buffer = new ArrayBuffer(44 + samples.length * 2);
+  const view = new DataView(buffer);
+
+  const writeString = (offset: number, str: string) => {
+    for (let i = 0; i < str.length; i++) {
+      view.setUint8(offset + i, str.charCodeAt(i));
+    }
+  };
+
+  writeString(0, 'RIFF');
+  view.setUint32(4, 36 + samples.length * 2, true);
+  writeString(8, 'WAVE');
+  writeString(12, 'fmt ');
+  view.setUint32(16, 16, true); // SubChunk1Size (16 for PCM)
+  view.setUint16(20, 1, true); // AudioFormat (1 = PCM)
+  view.setUint16(22, 1, true); // NumChannels (1 = Mono)
+  view.setUint32(24, sampleRate, true); // SampleRate (16000 Hz)
+  view.setUint32(28, sampleRate * 2, true); // ByteRate (16000 * 1 * 2 = 32000)
+  view.setUint16(32, 2, true); // BlockAlign (1 * 2)
+  view.setUint16(34, 16, true); // BitsPerSample (16 bits)
+  writeString(36, 'data');
+  view.setUint32(40, samples.length * 2, true);
+
+  // Write 16-bit PCM integer samples
+  let offset = 44;
+  for (let i = 0; i < samples.length; i++, offset += 2) {
+    const s = Math.max(-1, Math.min(1, samples[i]));
+    view.setInt16(offset, s < 0 ? s * 0x8000 : s * 0x7fff, true);
+  }
+
+  return new Blob([view], { type: 'audio/wav' });
+}
+
 export const VoiceRecorder: React.FC<VoiceRecorderProps> = ({
   roomId,
   onInstructionsParsed,
@@ -23,8 +71,15 @@ export const VoiceRecorder: React.FC<VoiceRecorderProps> = ({
   const [activePreset, setActivePreset] = useState<string | null>(null);
   const [transcriptionConfirmed, setTranscriptionConfirmed] = useState(false);
 
+  // AudioContext recording refs
+  const audioContextRef = useRef<AudioContext | null>(null);
+  const mediaStreamRef = useRef<MediaStream | null>(null);
+  const audioChunksPcmRef = useRef<Float32Array[]>([]);
+  const processorRef = useRef<ScriptProcessorNode | null>(null);
+
+  // Fallback MediaRecorder ref
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
-  const audioChunksRef = useRef<Blob[]>([]);
+  const fallbackChunksRef = useRef<Blob[]>([]);
 
   // Suggested Tanglish presets for quick demo & testing
   const presets = [
@@ -58,23 +113,42 @@ export const VoiceRecorder: React.FC<VoiceRecorderProps> = ({
   const startRecording = async () => {
     setTranscriptionError(null);
     setTranscriptionConfirmed(false);
+    audioChunksPcmRef.current = [];
+    fallbackChunksRef.current = [];
+
     try {
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-      audioChunksRef.current = [];
+      mediaStreamRef.current = stream;
 
-      const mediaRecorder = new MediaRecorder(stream);
-      mediaRecorder.ondataavailable = (e) => {
-        if (e.data.size > 0) audioChunksRef.current.push(e.data);
-      };
+      // Primary: Web Audio API pure PCM 16kHz WAV recorder
+      try {
+        const AudioContextClass = window.AudioContext || (window as any).webkitAudioContext;
+        const audioCtx = new AudioContextClass();
+        audioContextRef.current = audioCtx;
 
-      mediaRecorder.onstop = async () => {
-        const audioBlob = new Blob(audioChunksRef.current, { type: 'audio/wav' });
-        await handleAudioCaptured(audioBlob);
-        stream.getTracks().forEach((track) => track.stop());
-      };
+        const source = audioCtx.createMediaStreamSource(stream);
+        // 4096 buffer size, 1 input channel, 1 output channel
+        const processor = audioCtx.createScriptProcessor(4096, 1, 1);
+        processorRef.current = processor;
 
-      mediaRecorderRef.current = mediaRecorder;
-      mediaRecorder.start();
+        processor.onaudioprocess = (e) => {
+          const input = e.inputBuffer.getChannelData(0);
+          audioChunksPcmRef.current.push(new Float32Array(input));
+        };
+
+        source.connect(processor);
+        processor.connect(audioCtx.destination);
+      } catch (audioCtxErr) {
+        console.warn('AudioContext recording fallback to MediaRecorder', audioCtxErr);
+        // Fallback: MediaRecorder with true webm
+        const mr = new MediaRecorder(stream);
+        mediaRecorderRef.current = mr;
+        mr.ondataavailable = (e) => {
+          if (e.data.size > 0) fallbackChunksRef.current.push(e.data);
+        };
+        mr.start();
+      }
+
       setIsRecording(true);
       setStatusText('Listening in Tanglish / Tamil / English...');
     } catch (err: any) {
@@ -84,11 +158,60 @@ export const VoiceRecorder: React.FC<VoiceRecorderProps> = ({
     }
   };
 
-  const stopRecording = () => {
-    if (mediaRecorderRef.current && isRecording) {
+  const stopRecording = async () => {
+    if (!isRecording) return;
+    setIsRecording(false);
+    setStatusText('Processing recorded audio for Gnani Prisma STT...');
+
+    // Stop MediaStream tracks
+    if (mediaStreamRef.current) {
+      mediaStreamRef.current.getTracks().forEach((track) => track.stop());
+    }
+
+    let finalAudioBlob: Blob | null = null;
+
+    // Check if AudioContext PCM recording succeeded
+    if (audioContextRef.current && audioChunksPcmRef.current.length > 0) {
+      try {
+        const audioCtx = audioContextRef.current;
+        const sampleRate = audioCtx.sampleRate;
+
+        if (processorRef.current) {
+          processorRef.current.disconnect();
+          processorRef.current = null;
+        }
+        await audioCtx.close();
+        audioContextRef.current = null;
+
+        // Concatenate all float arrays
+        const totalSamples = audioChunksPcmRef.current.reduce((sum, chunk) => sum + chunk.length, 0);
+        const merged = new Float32Array(totalSamples);
+        let offset = 0;
+        for (const chunk of audioChunksPcmRef.current) {
+          merged.set(chunk, offset);
+          offset += chunk.length;
+        }
+
+        // Resample to 16000Hz (Gnani Prisma standard)
+        const resampled16k = downsampleTo16kHz(merged, sampleRate);
+        finalAudioBlob = encodeWav(resampled16k, 16000);
+      } catch (pcmErr) {
+        console.error('PCM encode error', pcmErr);
+      }
+    }
+
+    // Fallback if PCM failed
+    if (!finalAudioBlob && mediaRecorderRef.current) {
       mediaRecorderRef.current.stop();
-      setIsRecording(false);
-      setStatusText('Sending audio to Gnani Prisma STT...');
+      await new Promise((resolve) => setTimeout(resolve, 100));
+      finalAudioBlob = new Blob(fallbackChunksRef.current, { type: 'audio/webm' });
+    }
+
+    if (finalAudioBlob && finalAudioBlob.size > 0) {
+      await handleAudioCaptured(finalAudioBlob);
+    } else {
+      setTranscriptionError('No audio was captured. Please speak again.');
+      setStatusText('');
     }
   };
 
@@ -98,7 +221,7 @@ export const VoiceRecorder: React.FC<VoiceRecorderProps> = ({
     setTranscriptionConfirmed(false);
 
     try {
-      // Send audio to backend Gnani Prisma v2.5 endpoint
+      setStatusText('Transcribing with Gnani Prisma v2.5 STT...');
       const sttRes: TranscriptResult = await transcribeAudio(roomId, audioBlob);
 
       if (sttRes.success && sttRes.transcript) {
@@ -154,7 +277,6 @@ export const VoiceRecorder: React.FC<VoiceRecorderProps> = ({
 
   return (
     <div className="w-full bg-white dark:bg-slate-900/90 border border-slate-200 dark:border-slate-800 rounded-3xl p-6 sm:p-8 shadow-2xl relative overflow-hidden backdrop-blur-xl transition-colors">
-      {/* Decorative gradient glow */}
       <div className="absolute top-0 right-0 -mt-10 -mr-10 w-60 h-60 bg-emerald-500/10 rounded-full blur-3xl pointer-events-none" />
       <div className="absolute bottom-0 left-0 -mb-10 -ml-10 w-60 h-60 bg-teal-500/10 rounded-full blur-3xl pointer-events-none" />
 
@@ -177,7 +299,7 @@ export const VoiceRecorder: React.FC<VoiceRecorderProps> = ({
 
         <div className="flex items-center gap-2 text-xs font-mono text-slate-600 dark:text-slate-400 bg-slate-100 dark:bg-slate-950/60 px-3 py-1.5 rounded-xl border border-slate-200 dark:border-slate-800">
           <Volume2 className="w-4 h-4 text-emerald-500 dark:text-emerald-400" />
-          <span>Code-Mixed STT Active</span>
+          <span>16kHz PCM WAV Engine</span>
         </div>
       </div>
 
@@ -205,7 +327,7 @@ export const VoiceRecorder: React.FC<VoiceRecorderProps> = ({
 
         <div className="text-center">
           <span className="text-sm font-bold text-slate-900 dark:text-white block">
-            {isRecording ? 'Recording... Tap again to finish' : 'Tap Microphone to Speak'}
+            {isRecording ? 'Recording 16kHz PCM... Tap again to finish' : 'Tap Microphone to Speak'}
           </span>
           <span className="text-xs text-slate-500 dark:text-slate-400 mt-0.5 block">
             {statusText || 'Example: "Table and chair remove pannunga. Remaining arrange pannunga."'}

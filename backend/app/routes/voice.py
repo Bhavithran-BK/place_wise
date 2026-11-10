@@ -6,7 +6,7 @@ from fastapi import APIRouter, UploadFile, File, HTTPException
 from pydantic import BaseModel
 
 from app.routes.rooms import load_room_meta, save_room_meta
-from app.services.gnani_stt import GnaniSTT
+from app.services.gnani_stt import GnaniSTT, detect_audio_container
 from app.services.instruction_parser import InstructionParser
 from app.services.gnani_tts import GnaniTTS
 
@@ -31,26 +31,20 @@ class SpeakRequest(BaseModel):
 async def transcribe_room_audio(room_id: str, file: UploadFile = File(...)):
     """
     Accepts recorded voice audio (WAV/WebM/MP3/OGG), validates file type and size,
-    and calls Gnani Prisma v2.5 STT to generate a transcript.
+    inspects magic bytes, and calls Gnani Prisma v2.5 STT to generate a transcript.
     """
     meta = load_room_meta(room_id)
-    
-    # Validate file extension
-    suffix = Path(file.filename or "recording.wav").suffix.lower() or ".wav"
-    allowed_exts = {".wav", ".webm", ".ogg", ".mp3", ".m4a", ".flac"}
-    if suffix not in allowed_exts:
-        raise HTTPException(
-            status_code=400,
-            detail=f"Unsupported audio format '{suffix}'. Allowed formats: {', '.join(sorted(allowed_exts))}"
-        )
+    content = await file.read()
+    if len(content) == 0:
+        raise HTTPException(status_code=400, detail="Uploaded audio file is empty (0 bytes).")
+    if len(content) > 25 * 1024 * 1024:
+        raise HTTPException(status_code=400, detail="Uploaded audio file exceeds maximum size of 25 MB.")
 
-    # Save uploaded audio to temp file
+    # Detect actual container from magic bytes
+    detected_ext, _ = detect_audio_container(content[:64])
+    suffix = detected_ext or Path(file.filename or "recording.wav").suffix.lower() or ".wav"
+
     with tempfile.NamedTemporaryFile(delete=False, suffix=suffix) as tmp:
-        content = await file.read()
-        if len(content) == 0:
-            raise HTTPException(status_code=400, detail="Uploaded audio file is empty (0 bytes).")
-        if len(content) > 25 * 1024 * 1024:
-            raise HTTPException(status_code=400, detail="Uploaded audio file exceeds maximum size of 25 MB.")
         tmp.write(content)
         tmp_path = tmp.name
 

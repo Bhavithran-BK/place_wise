@@ -59,7 +59,8 @@ export const transcribeAudio = async (
   audioBlob: Blob,
 ): Promise<TranscriptResult> => {
   const fd = new FormData();
-  fd.append('file', audioBlob, 'recording.wav');
+  const ext = audioBlob.type.includes('webm') ? 'webm' : audioBlob.type.includes('ogg') ? 'ogg' : 'wav';
+  fd.append('file', audioBlob, `recording.${ext}`);
   return json(await fetch(`${API}/api/rooms/${id}/transcribe`, { method: 'POST', body: fd }));
 };
 
