@@ -17,7 +17,7 @@ DEMO_PROFILES: Dict[str, List[Dict[str, Any]]] = {
         {"class": "tv", "bbox": [479, 79, 721, 241], "fixed": True, "confidence": 0.98},
         {"class": "chair", "bbox": [499, 339, 612, 471], "fixed": False, "confidence": 0.92},
         {"class": "chair", "bbox": [639, 329, 742, 462], "fixed": False, "confidence": 0.91},
-        {"class": "potted_plant", "bbox": [709, 239, 761, 462], "fixed": False, "confidence": 0.89},
+        {"class": "potted_plant", "bbox": [709, 239, 761, 355], "fixed": False, "confidence": 0.89},
     ],
     "demo_bedroom": [
         {"class": "table", "bbox": [65, 310, 150, 440], "fixed": False, "confidence": 0.92},

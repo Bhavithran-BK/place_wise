@@ -112,14 +112,20 @@ class PlanAndImageRenderer:
         ty1: int,
         tx2: int,
         ty2: int,
-        obj_class: str
+        obj_class: str,
+        is_fixed: bool = False,
+        has_moved: bool = False
     ):
         """
-        Renders a soft, grounded contact shadow on the floor beneath movable furniture.
-        Prevents cutouts from looking like floating stickers.
+        Renders a subtle, localized contact shadow on the floor beneath movable furniture that has moved.
+        Never blurs the entire canvas and strictly skips fixed or stationary items.
         """
-        if obj_class.lower() in {"tv", "clock", "fan", "ceiling fan"}:
-            return  # Wall or ceiling mounted
+        if is_fixed or not has_moved:
+            return
+
+        cls_lower = obj_class.lower()
+        if cls_lower in {"tv", "clock", "fan", "ceiling fan", "bookshelf", "cupboard", "bed", "painting", "wall_art"}:
+            return  # Wall mounted or fixed furniture
 
         h, w = canvas.shape[:2]
         ow = max(1, tx2 - tx1)
@@ -127,29 +133,48 @@ class PlanAndImageRenderer:
 
         # Shadow ellipse parameters at the base of the furniture
         shadow_cx = int((tx1 + tx2) / 2)
-        shadow_cy = min(h - 5, int(ty2 - 4))
-        shadow_rx = int(ow * 0.45)
-        shadow_ry = max(4, int(oh * 0.08))
+        shadow_cy = min(h - 5, int(ty2 - 2))
+        shadow_rx = int(ow * 0.38)
+        shadow_ry = max(3, int(oh * 0.05))
 
         if shadow_rx <= 0 or shadow_ry <= 0:
             return
 
-        # Create localized shadow overlay
-        shadow_overlay = canvas.copy()
+        # Local footprint patch only - never touch or blur the rest of the canvas!
+        py1 = max(0, shadow_cy - shadow_ry - 8)
+        py2 = min(h, shadow_cy + shadow_ry + 8)
+        px1 = max(0, shadow_cx - shadow_rx - 8)
+        px2 = min(w, shadow_cx + shadow_rx + 8)
+
+        patch_h = py2 - py1
+        patch_w = px2 - px1
+        if patch_h <= 0 or patch_w <= 0:
+            return
+
+        # Draw ellipse on a local mask
+        mask = np.zeros((patch_h, patch_w), dtype=np.uint8)
+        local_cx = shadow_cx - px1
+        local_cy = shadow_cy - py1
         cv2.ellipse(
-            shadow_overlay,
-            (shadow_cx, shadow_cy),
+            mask,
+            (local_cx, local_cy),
             (shadow_rx, shadow_ry),
             0, 0, 360,
-            (15, 15, 15),
+            255,
             -1,
             cv2.LINE_AA
         )
 
-        # Soft blur
-        blurred_shadow = cv2.GaussianBlur(shadow_overlay, (21, 21), 0)
-        # Alpha blend 35% opacity
-        cv2.addWeighted(blurred_shadow, 0.35, canvas, 0.65, 0, canvas)
+        # Blur ONLY the local mask (zero canvas blur)
+        ksize = max(5, int(shadow_ry * 2) | 1)
+        blurred_mask = cv2.GaussianBlur(mask, (ksize, ksize), 0)
+        shadow_alpha = (blurred_mask.astype(float) / 255.0) * 0.20  # Subtle 20% floor darkening
+
+        # Apply darkening only within the local patch
+        canvas_patch = canvas[py1:py2, px1:px2].astype(float)
+        for c in range(3):
+            canvas_patch[:, :, c] = canvas_patch[:, :, c] * (1.0 - shadow_alpha)
+        canvas[py1:py2, px1:px2] = np.clip(canvas_patch, 0, 255).astype(np.uint8)
 
     def render_both_outputs(
         self,
@@ -261,13 +286,23 @@ class PlanAndImageRenderer:
             tx1, ty1, tx2, ty2 = to_coords
             tw = max(1, tx2 - tx1)
             th = max(1, ty2 - ty1)
-            obj_id = obj.get("id")
+            obj_id = obj.get("id") or obj.get("object_id")
             cls_name = obj.get("class", "furniture")
+            is_fixed = obj.get("fixed", False) or cls_name.lower() in {"tv", "bookshelf", "cupboard", "bed"}
+            has_moved = (tx1 != x1 or ty1 != y1 or tx2 != x2 or ty2 != y2)
 
-            # 3a. Add contact shadow on floor
-            self._render_contact_shadow(rearranged_canvas, tx1, ty1, tx2, ty2, cls_name)
+            # 3a. Add contact shadow on floor (strictly localized to moved items only)
+            self._render_contact_shadow(
+                rearranged_canvas, tx1, ty1, tx2, ty2, cls_name,
+                is_fixed=is_fixed, has_moved=has_moved
+            )
 
-            # 3b. Load transparent cutout
+            # 3b. For fixed/stationary objects that haven't moved, copy crisp original pixels directly:
+            if not has_moved and is_fixed:
+                rearranged_canvas[y1:y2, x1:x2] = orig_img[y1:y2, x1:x2]
+                continue
+
+            # 3c. Load transparent cutout
             cutout = None
             cutout_file = self.objects_dir / f"cutout_{room_id}_{obj_id}.png"
             if not cutout_file.exists():
